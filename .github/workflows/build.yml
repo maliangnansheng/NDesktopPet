@@ -25,22 +25,28 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # 注意 --publish=never：
+      #   electron-builder 只要检测到 CI 环境变量，就会把发布策略默认成 auto，
+      #   打完包立刻去 GitHub Releases 上传，找不到 token 就整步报错
+      #   （"GitHub Personal Access Token is not set"）—— 包其实已经打好了，
+      #   只是被这一步带崩。发版统一交给下面 release job 用 gh release create，
+      #   所以这里明确关掉。
       matrix:
         include:
           - os: windows-latest
             label: Windows x64
-            run: npm run build:win
+            run: npm run build:win -- --publish=never
             files: dist/*.exe
           - os: macos-latest
             label: macOS
             # 同一个 job 里分别出 Apple Silicon 与 Intel 两版
-            run: npm run build:mac -- --arm64 && npm run build:mac -- --x64
+            run: npm run build:mac -- --arm64 --publish=never && npm run build:mac -- --x64 --publish=never
             files: |
               dist/*.dmg
               dist/*.zip
           - os: ubuntu-latest
             label: Linux x64
-            run: npm run build:linux
+            run: npm run build:linux -- --publish=never
             files: |
               dist/*.AppImage
               dist/*.tar.gz
