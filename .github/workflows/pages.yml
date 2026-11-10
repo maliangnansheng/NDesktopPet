@@ -38,9 +38,13 @@ jobs:
           cp -r index.html assets _site/
           find _site -type f | sort
 
+      # 注意：这里不能用 configure-pages 的 enablement: true 去「自动开启 Pages」。
+      # 新建 Pages 站点是 admin 级接口，Actions 里的 GITHUB_TOKEN 调它会返回
+      # Resource not accessible by integration，整个 job 直接挂。
+      # 所以 Pages 必须先手动开一次：
+      #   仓库 Settings → Pages → Build and deployment → Source 选 "GitHub Actions"
+      # 开完之后这个工作流每次推 main 都会自动发布。
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true        # 第一次跑时自动把仓库的 Pages 打开（source = GitHub Actions）
 
       - uses: actions/upload-pages-artifact@v3
         with:
