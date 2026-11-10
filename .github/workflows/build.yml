@@ -35,10 +35,12 @@ jobs:
         include:
           - os: windows-latest
             label: Windows x64
+            artifact: NDesktopPet-windows-x64
             run: npm run build:win -- --publish=never
             files: dist/*.exe
           - os: macos-latest
             label: macOS
+            artifact: NDesktopPet-macos
             # 同一个 job 里分别出 Apple Silicon 与 Intel 两版
             run: npm run build:mac -- --arm64 --publish=never && npm run build:mac -- --x64 --publish=never
             files: |
@@ -46,6 +48,7 @@ jobs:
               dist/*.zip
           - os: ubuntu-latest
             label: Linux x64
+            artifact: NDesktopPet-linux-x64
             run: npm run build:linux -- --publish=never
             files: |
               dist/*.AppImage
@@ -86,9 +89,9 @@ jobs:
           echo "::error title=${{ matrix.label }} 构建失败（日志尾部）::$msg"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
-          name: NDesktopPet-${{ matrix.label }}
+          name: ${{ matrix.artifact }}
           path: ${{ matrix.files }}
           if-no-files-found: error
           compression-level: 0
@@ -96,10 +99,13 @@ jobs:
   release:
     name: Publish release
     needs: build
+    # 只有推 v* tag 才发版：git tag v1.0.0 && git push --tags
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
 
@@ -108,8 +114,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
-          find artifacts -type f | sort
-          gh release create "$TAG" \
-            --title "NDesktopPet $TAG" \
-            --generate-notes \
-            $(find artifacts -type f | sort)
+          set -euo pipefail
+          # 产物路径按 0 分隔读进数组：直接 $(find ...) 遇到带空格的名字会被拆成
+          # 多个参数，gh 会报「文件不存在」
+          mapfile -t files < <(find artifacts -type f | sort)
+          printf '%s\n' "${files[@]}"
+          # 有手写说明就用它（.github/release-notes/<tag>.md），没有则按 commit 自动生成
+          notes=".github/release-notes/${TAG}.md"
+          if [ -f "$notes" ]; then
+            gh release create "$TAG" --title "NDesktopPet ${TAG}" --notes-file "$notes" "${files[@]}"
+          else
+            gh release create "$TAG" --title "NDesktopPet ${TAG}" --generate-notes "${files[@]}"
+          fi

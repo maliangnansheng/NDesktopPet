@@ -4,11 +4,12 @@ node_modules/
 
 # ---------------- 打包产物 ----------------
 # npm run build:win / build:mac / build:linux 都会生成，可随时重建
-dist/
-release/
-release-*/
-out-*/
-dist-*/
+# 只匹配仓库根目录：否则 .github/release-notes/ 这种正经目录也会被 release-*/ 吃掉
+/dist/
+/release/
+/release-*/
+/out-*/
+/dist-*/
 
 # electron-builder 的中间文件与安装包（万一产物没落在 dist/ 里）
 *.asar
