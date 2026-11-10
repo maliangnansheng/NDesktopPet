@@ -109,7 +109,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create release
+      - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
@@ -121,8 +121,18 @@ jobs:
           printf '%s\n' "${files[@]}"
           # 有手写说明就用它（.github/release-notes/<tag>.md），没有则按 commit 自动生成
           notes=".github/release-notes/${TAG}.md"
-          if [ -f "$notes" ]; then
-            gh release create "$TAG" --title "NDesktopPet ${TAG}" --notes-file "$notes" "${files[@]}"
+          title="NDesktopPet ${TAG}"
+          # 允许重跑同一个 tag：已存在就只改说明 + 覆盖同名产物（--clobber），
+          # 否则重打一次包就会因为「release 已存在」整个 job 挂掉
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ -f "$notes" ]; then
+              gh release edit "$TAG" --title "$title" --notes-file "$notes"
+            else
+              gh release edit "$TAG" --title "$title"
+            fi
+            gh release upload "$TAG" "${files[@]}" --clobber
+          elif [ -f "$notes" ]; then
+            gh release create "$TAG" --title "$title" --notes-file "$notes" "${files[@]}"
           else
-            gh release create "$TAG" --title "NDesktopPet ${TAG}" --generate-notes "${files[@]}"
+            gh release create "$TAG" --title "$title" --generate-notes "${files[@]}"
           fi

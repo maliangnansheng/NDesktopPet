@@ -1,31 +1,31 @@
 /* electron-builder 配置
  *
- * 为什么不写在 package.json 的 "build" 字段里？
- *   三平台共用一份 electron 下载缓存。`npm install` 只会在 node_modules/electron/dist
- *   里放**当前系统**那一份（Windows 上是 electron.exe）。以前把 electronDist 写死成
- *   这个目录，打 Windows 包没问题，但打 Linux / macOS 包时它会把 Windows 版的
- *   electron 拷进 linux-unpacked，再去找名叫 `electron` 的可执行文件 —— 找不到，
- *   于是报 `ENOENT: no such file or directory, rename ...\electron -> ...\ndesktop-pet`。
+ * 关于 electronDist（复用本机 electron）：
+ *   npm install 只会在 node_modules/electron/dist 里放**当前系统+当前架构**那一份。
+ *   国内直连 github.com 下 electron 基本会 EOF，所以本地打包最好复用它；
+ *   但复用得判断「目标平台 + 目标架构」是否和本机一致，否则就会出现
+ *   macOS arm64 机器上打 --x64、结果把 arm64 的 electron 拷进去的事故
+ *   （产物名字叫 mac-x64、内容却是 arm64，Intel 机器打不开）。
  *
- *   这里改成函数：目标平台和本地这份一致才复用本地目录，否则返回 undefined，
- *   让 electron-builder 按目标平台自己下载对应的 electron。
- *   （国内下载慢 / 失败时设环境变量 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/）
+ *   判断依据不能问 prepareOptions：electron-builder 的 electronDist 回调只传
+ *   prepareOptions（packager / appOutDir / platformName），**没有 arch**
+ *   （arch 在同级的 options 参数上，回调拿不到 —— 早期版本这里踩过坑）。
+ *   改成自己从 process.argv 里读 CLI 参数（本配置就跑在 electron-builder 进程里，
+ *   scripts/build.js 又把 `--mac --x64` 原样转发过去，所以一定读得到）。
+ *
+ *   命中缓存时 electron-builder 不会真的重下：它用 %LOCALAPPDATA%\electron\Cache
+ *   （macOS/Linux 是 ~/.cache/electron）。国内网络慢就设
+ *   ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+ *
+ * 配置为什么不写在 package.json 的 "build" 字段里？
+ *   LINUX_TARGETS 要按宿主平台动态决定（见下），JSON 写不了条件逻辑。
  */
 const fs = require('fs');
 const path = require('path');
 
 const LOCAL_ELECTRON = path.join(__dirname, 'node_modules', 'electron', 'dist');
-const ON_WINDOWS = process.platform === 'win32';
 
-/* AppImage 打包时要在镜像里建一条符号链接指向图标，而 Windows 账号默认没有
- * 「创建符号链接」的权限（和 winCodeSign 解压失败是同一个坑），会直接报
- * "A required privilege is not held by the client"。所以 Windows 上只产 tar.gz，
- * AppImage / deb 交给 Linux、macOS 或仓库里的 GitHub Actions 出。 */
-const LINUX_TARGETS = ON_WINDOWS
-  ? [{ target: 'tar.gz', arch: ['x64'] }]
-  : [{ target: 'AppImage' }, { target: 'tar.gz' }];
-
-/** 本地这份 electron 属于哪个平台 */
+/* 本机那份 electron 属于哪个平台 */
 function localElectronPlatform() {
   if (!fs.existsSync(LOCAL_ELECTRON)) return null;
   if (fs.existsSync(path.join(LOCAL_ELECTRON, 'electron.exe'))) return 'win32';
@@ -34,9 +34,36 @@ function localElectronPlatform() {
   return null;
 }
 
-/* electron-builder 的 Arch 枚举：ia32=0 x64=1 armv7l=2 arm64=3 universal=4 */
-const ARCH = { ia32: 0, x64: 1, armv7l: 2, arm64: 3, universal: 4 };
-const LOCAL_ARCH = ARCH[process.arch];
+/* CLI 参数 → 本次要打的平台 / 架构（可能没写，表示「按本机」） */
+const PLATFORM_FLAGS = {
+  '--win': 'win32', '-w': 'win32',
+  '--mac': 'darwin', '-m': 'darwin',
+  '--linux': 'linux', '-l': 'linux'
+};
+const ARCH_FLAGS = {
+  '--x64': 'x64', '--arm64': 'arm64', '--ia32': 'ia32',
+  '--armv7l': 'armv7l', '--universal': 'universal'
+};
+
+function flagsIn(table, argv) {
+  const list = [];
+  for (const arg of argv) {
+    const hit = table[arg.split('=')[0]];
+    if (hit) list.push(hit);
+  }
+  return list;
+}
+
+const targetPlatforms = (argv) => flagsIn(PLATFORM_FLAGS, argv);
+const targetArchs = (argv) => flagsIn(ARCH_FLAGS, argv);
+
+/* AppImage 打包时要在镜像里建一条符号链接指向图标，而 Windows 账号默认没有
+ * 「创建符号链接」的权限（和 winCodeSign 解压失败是同一个坑），会直接报
+ * "A required privilege is not held by the client"。所以 Windows 上只产 tar.gz，
+ * AppImage / deb 交给 Linux、macOS 或仓库里的 GitHub Actions 出。 */
+const LINUX_TARGETS = process.platform === 'win32'
+  ? [{ target: 'tar.gz', arch: ['x64'] }]
+  : [{ target: 'AppImage' }, { target: 'tar.gz' }];
 
 module.exports = {
   appId: 'top.nansin.ndesktoppet',
@@ -50,14 +77,20 @@ module.exports = {
   /* uiohook-napi 自带各平台预编译二进制，不需要 node-gyp 重编 */
   npmRebuild: false,
 
+  /* 目标平台（prepareOptions.platformName，可靠）+ 目标架构（从 CLI 参数读）
+   * 都和本机这份 electron 对得上，才复用它；否则交给 electron-builder
+   * 按目标平台/架构自己下载，别把本机那份拷进别的架构的包里。 */
   electronDist(prepareOptions) {
-    const local = localElectronPlatform();
     const platformName = prepareOptions && prepareOptions.platformName;
-    const arch = prepareOptions && prepareOptions.arch;
-    /* 平台、架构都对得上才复用本地那份，否则让它去下目标平台/架构的 electron */
-    const reusable = local && platformName === local &&
-      (typeof arch !== 'number' || LOCAL_ARCH === undefined || arch === LOCAL_ARCH);
-    return reusable ? LOCAL_ELECTRON : undefined;
+    const local = localElectronPlatform();
+    if (!local || platformName !== local) return undefined;
+
+    const argv = process.argv;
+    const platforms = targetPlatforms(argv);           /* 空 = 没指定，按本机 */
+    const archs = targetArchs(argv);
+    const samePlatform = platforms.length === 0 || platforms.every((p) => p === local);
+    const sameArch = archs.length === 0 || archs.every((a) => a === process.arch);
+    return samePlatform && sameArch ? LOCAL_ELECTRON : undefined;
   },
 
   /* 国内拉 electron 大文件经常超时，给个镜像口子（不改默认行为） */
