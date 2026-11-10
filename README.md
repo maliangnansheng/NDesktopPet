@@ -23,9 +23,19 @@
 ## 🎬 先看效果
 
 <div align="center">
-  <img src="docs/screenshots/typing.gif" alt="敲键盘 / 点鼠标的实时同步" width="360" />
-  <br />
-  <sub>你在键盘上敲的每个键，它面前的迷你键盘同一个位置就会亮起；按鼠标左键向左偏、右键向右偏</sub>
+
+### ▶ <a href="https://maliangnansheng.github.io/NDesktopPet/">在线试玩 · 打开就能戳</a>
+
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/desktop.gif" alt="在真实桌面上敲键盘，桌宠面前的迷你键盘同位置亮起" width="720" />
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/desktop-panel.png" alt="桌宠气泡与操作面板" width="49%" />
+  &nbsp;
+  <img src="docs/screenshots/desktop-sailor.png" alt="换一只桌宠继续同步键鼠" width="49%" />
 </div>
 
 ---
@@ -42,6 +52,11 @@
 ---
 
 ## 🚀 快速开始
+
+**⓪ 什么都不装，先在线试玩**
+
+浏览器打开 → **[maliangnansheng.github.io/NDesktopPet](https://maliangnansheng.github.io/NDesktopPet/)**，能换宠、敲键盘、缩放、拖拽。
+（透明置顶和全局键鼠监听是桌面版独有的，网页版看不到）
 
 **① 直接下载安装包**（不装任何环境）
 

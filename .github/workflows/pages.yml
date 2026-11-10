@@ -1,0 +1,50 @@
+name: Deploy demo
+
+# 把网页版（index.html + assets）发到 GitHub Pages，
+# 这样 README 里的「在线试玩」按钮点开就是一个能真的戳的桌宠。
+#
+# 为什么不能直接在 README 里跑 HTML？
+#   GitHub 的 markdown 会做 sanitize，iframe / script / style 全部剥掉，
+#   所以 README 里最多只能放图片和链接，交互演示只能靠 Pages 这类外部托管。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同时只允许一个部署，新的顶掉旧的，避免两个 Pages 部署抢锁
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # 只发网页本体：README / Electron 外壳 / 打包脚本都不该出现在演示站上
+      - name: Collect site files
+        run: |
+          mkdir -p _site
+          cp -r index.html assets _site/
+          find _site -type f | sort
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true        # 第一次跑时自动把仓库的 Pages 打开（source = GitHub Actions）
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
