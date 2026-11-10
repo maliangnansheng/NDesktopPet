@@ -1,0 +1,24 @@
+{
+  "name": "ndesktop-pet",
+  "version": "1.0.0",
+  "description": "NDesktopPet（南生桌宠）— 无需登录，9 只透明立绘桌宠全部免费领养，支持自定义桌宠与自定义分类",
+  "author": "南生",
+  "license": "MIT",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --enable-logging",
+    "build": "npm run build:win",
+    "build:win": "node scripts/build.js --win --x64",
+    "build:linux": "node scripts/check-target.js linux && node scripts/build.js --linux",
+    "build:mac": "node scripts/check-target.js mac && node scripts/build.js --mac",
+    "build:all": "npm run build:win && npm run build:linux"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "uiohook-napi": "^1.5.5"
+  }
+}

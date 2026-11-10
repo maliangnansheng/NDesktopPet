@@ -1,0 +1,50 @@
+# ---------------- 依赖 ----------------
+node_modules/
+.pnpm-store/
+
+# ---------------- 打包产物 ----------------
+# npm run build:win / build:mac / build:linux 都会生成，可随时重建
+dist/
+release/
+release-*/
+out-*/
+dist-*/
+
+# electron-builder 的中间文件与安装包（万一产物没落在 dist/ 里）
+*.asar
+*.blockmap
+*.dmg
+*.AppImage
+*.snap
+*.deb
+*.rpm
+
+# ---------------- 编辑器 / IDE ----------------
+.idea/
+.vscode/
+*.iml
+.history/
+*.swp
+*.swo
+*~
+
+# ---------------- 操作系统 ----------------
+.DS_Store
+._*
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ---------------- 日志 / 缓存 / 临时文件 ----------------
+*.log
+npm-debug.log*
+yarn-error.log*
+.eslintcache
+*.tmp
+.tmp-*/
+.chrome-test*/
+
+# ---------------- 本地环境变量 ----------------
+.env
+.env.local
+.env.*.local

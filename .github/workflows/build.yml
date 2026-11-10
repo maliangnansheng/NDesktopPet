@@ -1,0 +1,89 @@
+name: Build desktop app
+
+# 打三平台安装包。
+#   手动跑：Actions 页面 → 选这个 workflow → Run workflow
+#   发版本：git tag v1.0.0 && git push --tags  → 会自动建 Release 并挂上安装包
+#
+# 为什么要在 GitHub 上打？
+#   macOS 的 dmg 只能在 macOS 上生成，Linux 的 AppImage 要能建符号链接 ——
+#   这两件事 Windows 都做不了。三个 runner 各用原生系统，各自打包最省事。
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows x64
+            run: npm run build:win
+            files: dist/*.exe
+          - os: macos-latest
+            label: macOS
+            # 同一个 job 里分别出 Apple Silicon 与 Intel 两版
+            run: npm run build:mac -- --arm64 && npm run build:mac -- --x64
+            files: |
+              dist/*.dmg
+              dist/*.zip
+          - os: ubuntu-latest
+            label: Linux x64
+            run: npm run build:linux
+            files: |
+              dist/*.AppImage
+              dist/*.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: ${{ matrix.run }}
+        env:
+          # 没有 Apple 开发者证书时不要去探测签名身份，省得卡住
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NDesktopPet-${{ matrix.label }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          find artifacts -type f | sort
+          gh release create "$TAG" \
+            --title "NDesktopPet $TAG" \
+            --generate-notes \
+            $(find artifacts -type f | sort)
