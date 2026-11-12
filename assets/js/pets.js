@@ -22,7 +22,8 @@
     { id: 'sailor', name: '水手少女', cat: 'default', image: 'assets/pets/sailor.webp', alpha: true },
     { id: 'twintail', name: '紫双马尾', cat: 'default', image: 'assets/pets/twintail.webp', alpha: true },
     { id: 'dreadnought', name: '无畏战舰', cat: 'default', image: 'assets/pets/dreadnought.webp', alpha: true },
-    { id: 'frigate', name: '深空护卫', cat: 'default', image: 'assets/pets/frigate.webp', alpha: true }
+    { id: 'frigate', name: '深空护卫', cat: 'default', image: 'assets/pets/frigate.webp', alpha: true },
+    { id: 'elfGirl', name: '精灵少女', cat: 'default', image: 'assets/pets/elfGirl.gif', alpha: true }
   ];
 
   /* ---------------- 桌面道具：键盘 / 鼠标 / 爪子 ---------------- */

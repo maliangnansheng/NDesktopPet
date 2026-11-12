@@ -56,9 +56,80 @@
   }
   function persist() { save(STORE, S); }
   function persistCustom() {
-    const ok = save(CUSTOM_KEY, customs);
+    /* 动图的 image 是运行时 objectURL（blob:...），重启就失效，
+       落盘时必须抹掉，只留 imgKey，启动时再从 IndexedDB 取回 */
+    const payload = customs.map(p => (p.imgKey && p.image && p.image.indexOf('blob:') === 0)
+      ? Object.assign({}, p, { image: '' })
+      : p);
+    const ok = save(CUSTOM_KEY, payload);
     if (!ok) toast('本机存储空间不足，请先删掉一些自定义桌宠');
     return ok;
+  }
+
+  /* ---------------- 动图立绘：原始字节存 IndexedDB ----------------
+   * localStorage 只有 5MB 左右，一张 GIF 转成 base64 就吃掉大半；更要命的是
+   * 走 canvas 压缩会把动图压成静态的第一帧，动画就没了。所以动图原样存进
+   * IndexedDB（配额是几百 MB 级别），localStorage 里只留一个 imgKey。
+   */
+  const IMG_DB = 'desktoppet.img.v1';
+  let idbPromise = null;
+
+  function openImgDB() {
+    if (idbPromise) return idbPromise;
+    idbPromise = new Promise(resolve => {
+      try {
+        const req = indexedDB.open(IMG_DB, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains('img')) db.createObjectStore('img');
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+        req.onblocked = () => resolve(null);
+      } catch (e) { resolve(null); }
+    });
+    return idbPromise;
+  }
+
+  /* 统一的事务包装：拿不到库（隐私模式等）就返回 undefined，调用方自己兜底。
+     work 里用 done(v) 交出结果 —— 只有事务真的 complete 才算成功，
+     否则 request.onsuccess 也可能因为后续 abort 而白高兴一场。 */
+  function imgStore(mode, work) {
+    return openImgDB().then(db => new Promise(resolve => {
+      if (!db) return resolve(undefined);
+      let tx;
+      try { tx = db.transaction('img', mode); } catch (e) { return resolve(undefined); }
+      let out;
+      tx.oncomplete = () => resolve(out);
+      tx.onerror = () => resolve(undefined);
+      tx.onabort = () => resolve(undefined);
+      try { work(tx.objectStore('img'), v => { out = v; }); } catch (e) { resolve(undefined); }
+    }));
+  }
+
+  function idbPut(key, blob) {
+    return imgStore('readwrite', (st, done) => { st.put(blob, key); done(true); })
+      .then(v => v === true);
+  }
+  function idbGet(key) {
+    return imgStore('readonly', (st, done) => {
+      const req = st.get(key);
+      req.onsuccess = () => done(req.result || null);
+    }).then(v => v || null);
+  }
+  function idbDel(key) {
+    return imgStore('readwrite', (st, done) => { st.delete(key); done(true); })
+      .then(v => v === true);
+  }
+
+  /* 启动时把动图从 IndexedDB 取回来，换成 objectURL 挂到桌宠上 */
+  async function hydrateCustomImages() {
+    const pending = customs.filter(p => p.imgKey && !p.image);
+    for (const p of pending) {
+      let blob = null;
+      try { blob = await idbGet(p.imgKey); } catch (e) { blob = null; }
+      if (blob) p.image = URL.createObjectURL(blob);
+    }
   }
 
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -633,6 +704,12 @@
     const p = petOf(id);
     if (!p || !p.custom) return;
     if (!confirm('删除「' + p.name + '」？')) return;
+    if (p.imgKey) {
+      idbDel(p.imgKey);
+      if (p.image && p.image.indexOf('blob:') === 0) {
+        try { URL.revokeObjectURL(p.image); } catch (e) {}
+      }
+    }
     customs = customs.filter(x => x.id !== id);
     persistCustom();
     if (S.petId === id) S.petId = PETS[0].id;
@@ -650,6 +727,27 @@
         </svg></span>`;
   let cImage = null;
   let cImageAlpha = false;
+  let cAnimated = null;   /* { blob } 动图原始文件，保存时写进 IndexedDB */
+  let cTempUrl = null;    /* 预览用的 objectURL（动图本身），换图或保存后回收 */
+
+  function revokeCTemp() {
+    if (!cTempUrl) return;
+    try { URL.revokeObjectURL(cTempUrl); } catch (e) {}
+    cTempUrl = null;
+  }
+  const isGif = f => f.type === 'image/gif' || /\.gif$/i.test(f.name || '');
+  const sizeText = b => b >= 1048576
+    ? (b / 1048576).toFixed(1) + 'MB'
+    : Math.max(1, Math.round(b / 1024)) + 'KB';
+
+  function readDataUrl(blob) {
+    return new Promise(resolve => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result || '');
+      r.onerror = () => resolve('');
+      r.readAsDataURL(blob);
+    });
+  }
 
   /* 分类下拉：我的 + 已有自定义分类 + ＋新建分类 */
   function fillCatOptions() {
@@ -683,6 +781,8 @@
     fillCatOptions();
     cImage = null;
     cImageAlpha = false;
+    cAnimated = null;
+    revokeCTemp();
     showSpec('');
     el.cImgPreview.classList.remove('has-img');
     el.cImgPreview.innerHTML = PLACEHOLDER;
@@ -726,20 +826,25 @@
   }
 
   function handleImageFile(f) {
-    if (!/^image\//.test(f.type) && !/\.svg$/i.test(f.name || '')) { toast('请选择图片文件'); return; }
-    if (f.size > 6 * 1024 * 1024) {
-      showSpec('文件超过 6MB，请先压缩到 6MB 以内');
+    /* 有些平台的 file input 给不出 MIME（type 为空字符串），只能靠扩展名兜底 */
+    const IMG_EXT = /\.(png|jpe?g|webp|gif|avif|bmp|svg)$/i;
+    if (!/^image\//.test(f.type) && !IMG_EXT.test(f.name || '')) { toast('请选择图片文件'); return; }
+    const maxMb = isGif(f) ? 12 : 6;   /* 动图存 IndexedDB，不吃 localStorage 配额 */
+    if (f.size > maxMb * 1024 * 1024) {
+      showSpec('文件超过 ' + maxMb + 'MB，请先压缩再试');
       toast('图片太大了');
       return;
     }
     if (isSvg(f)) { handleSvgFile(f); return; }
 
+    revokeCTemp();
     const previewUrl = URL.createObjectURL(f);
     el.cImgPreview.classList.add('has-img');
     el.cImgPreview.innerHTML = `<img src="${previewUrl}" alt="预览">`;
     el.dzTitle.textContent = '点击可更换图片';
     cImage = null;
     cImageAlpha = false;
+    cAnimated = null;
 
     const probe = new Image();
     probe.onload = () => {
@@ -756,15 +861,15 @@
       const alpha = detectAlpha(probe);
       showSpec(alpha ? '✓ 检测到透明背景：将以「站立抠图」显示' : '✓ 这张图不是透明背景，会有白色底框（建议换透明 PNG 或 SVG）', alpha);
 
-      /* GIF 保留动图 */
-      if (f.type === 'image/gif' && f.size < 1.2 * 1024 * 1024) {
-        const r = new FileReader();
-        r.onload = () => {
-          URL.revokeObjectURL(previewUrl);
-          cImage = r.result; cImageAlpha = alpha; paintImage();
-        };
-        r.onerror = () => toast('图片读取失败');
-        r.readAsDataURL(f);
+      /* 动图（GIF）：原样保留，一张都不压 —— compress() 走 canvas，只会留下第一帧，
+         动画就没了。预览也直接挂 objectURL，编辑器里就能看到它动。 */
+      if (isGif(f)) {
+        cImage = previewUrl;
+        cTempUrl = previewUrl;
+        cImageAlpha = alpha;
+        cAnimated = { blob: f };
+        paintImage();
+        showSpec('✓ 动图：保留原始动画（' + sizeText(f.size) + '）', true);
         return;
       }
       compress(f, (url, a, cut) => {
@@ -943,13 +1048,16 @@
   });
 
   el.cCancel.addEventListener('click', () => {
+    revokeCTemp();
+    cImage = null;
+    cAnimated = null;
     el.creator.hidden = true;
     card.classList.remove('is-creating');
     mgrCat = mgrCatBefore;
     buildManager();
   });
 
-  el.cSave.addEventListener('click', () => {
+  el.cSave.addEventListener('click', async () => {
     if (customs.length >= MAX_CUSTOM) { toast('最多 ' + MAX_CUSTOM + ' 个自定义桌宠'); return; }
     if (!cImage) { toast('先选一张图片吧'); return; }
 
@@ -965,16 +1073,40 @@
     if (!cat) cat = 'mine';
 
     const name = (el.cName.value || '').trim() || '我的桌宠';
+    const id = 'u' + Date.now().toString(36);
     const pet = {
-      id: 'u' + Date.now().toString(36),
+      id,
       name,
       cat,
       image: cImage,
       alpha: cImageAlpha,
       custom: true
     };
+
+    /* 动图：原始字节塞进 IndexedDB，localStorage 里只留 imgKey（避免超配额） */
+    if (cAnimated) {
+      const stored = await idbPut(id, cAnimated.blob);
+      if (stored) {
+        pet.imgKey = id;
+        pet.animated = true;
+        pet.image = URL.createObjectURL(cAnimated.blob);
+      } else {
+        /* IndexedDB 用不了（隐私模式等）：退回 data URL，大图会提示空间不足 */
+        const dataUrl = await readDataUrl(cAnimated.blob);
+        if (!dataUrl) { toast('动图读取失败，换一张试试'); return; }
+        pet.image = dataUrl;
+        pet.animated = true;
+      }
+    }
+
     customs.push(pet);
-    if (!persistCustom()) { customs.pop(); return; }
+    if (!persistCustom()) {
+      customs.pop();
+      if (pet.imgKey) idbDel(pet.imgKey);
+      return;
+    }
+    revokeCTemp();
+    cAnimated = null;
 
     el.creator.hidden = true;
     card.classList.remove('is-creating');
@@ -1032,18 +1164,25 @@
     window.desktopPet.setIgnore(true);
   }
 
-  /* ---------------- 启动 ---------------- */
-  if (!allPets().some(p => p.id === S.petId)) S.petId = PETS[0].id;
-  if (!catsList().some(c => c.id === S.cat)) S.cat = 'all';
-  el.brandSub.textContent = '无需登录 · ' + allPets().length + ' 只桌宠 · 全部免费 · 支持自定义';
-  refreshAll();
-  applyPlace();
-  setDockOpen(S.dockOpen !== false);
-  if (S.hidden) {
-    el.pet.classList.add('is-hidden');
-    el.btnHide.textContent = '显示桌宠';
-  } else {
-    setTimeout(() => say('我来啦，把鼠标放到我身上滚滚轮～', 3200), 700);
-  }
-  setTimeout(() => el.hint.classList.add('is-gone'), 6500);
+  /* ---------------- 启动 ----------------
+   * 动图立绘的字节存在 IndexedDB 里，先把 objectURL 取回来再渲染，
+   * 否则首屏会出现「有卡片、没图」的空档。
+   */
+  (async function boot() {
+    try { await hydrateCustomImages(); } catch (e) {}
+
+    if (!allPets().some(p => p.id === S.petId)) S.petId = PETS[0].id;
+    if (!catsList().some(c => c.id === S.cat)) S.cat = 'all';
+    el.brandSub.textContent = '无需登录 · ' + allPets().length + ' 只桌宠 · 全部免费 · 支持自定义';
+    refreshAll();
+    applyPlace();
+    setDockOpen(S.dockOpen !== false);
+    if (S.hidden) {
+      el.pet.classList.add('is-hidden');
+      el.btnHide.textContent = '显示桌宠';
+    } else {
+      setTimeout(() => say('我来啦，把鼠标放到我身上滚滚轮～', 3200), 700);
+    }
+    setTimeout(() => el.hint.classList.add('is-gone'), 6500);
+  })();
 })();
